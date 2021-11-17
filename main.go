@@ -1,4 +1,4 @@
-package main
+package proxy
 
 import (
 	"fmt"
@@ -8,14 +8,6 @@ import (
 	"strings"
 	"time"
 )
-
-func main() {
-	http.HandleFunc("/", reverse)
-	err := http.ListenAndServe("0.0.0.0:80", nil)
-	if err != nil {
-		panic(err)
-	}
-}
 
 type Backend struct {
 	/* Backend servers */
@@ -31,6 +23,7 @@ type Backend struct {
 	pause map[string]time.Time
 }
 
+/* Get load balance backend url */
 func (b *Backend) GetUrl() *url.URL {
 	if b.serverNumber >= len(b.Upstreams) {
 		b.serverNumber = 0
@@ -44,6 +37,7 @@ func (b *Backend) GetUrl() *url.URL {
 	return uri
 }
 
+/* Modify Upstream list */
 func (b *Backend) CheckUpstream(host string, statusCode int) {
 	if _, ok := b.failTimes[host]; !ok {
 		b.failTimes[host] = 0
@@ -79,41 +73,43 @@ func (b *Backend) CheckUpstream(host string, statusCode int) {
 	}
 }
 
-func reverse(rw http.ResponseWriter, r *http.Request) {
-	rw.Header().Set("X-Proxy-Enable", "true")
-	backend := Controller(r)
-	url := backend.GetUrl()
-	resp := Proxy(r, url)
-	backend.CheckUpstream(resp.Request.Host, resp.StatusCode)
-
-	/* Parse body */
-	if resp.StatusCode == http.StatusBadGateway || resp.StatusCode == http.StatusGatewayTimeout {
-		rw.WriteHeader(resp.StatusCode)
-		rw.Write([]byte(nil))
-	} else {
-		body, err := ioutil.ReadAll(resp.Body)
-		if err != nil {
-			fmt.Println(err)
-		}
-		resp.Body.Close()
-		rw.Write(body)
+/* Create default Backend */
+func NewBackendDefault(servers []string) *Backend {
+	return &Backend{
+		Upstreams:    servers,
+		MaxFail:      3,
+		MaxPauseTime: 2 * time.Minute,
+		failTimes:    make(map[string]int),
+		pause:        make(map[string]time.Time),
 	}
 }
 
-func Proxy(r *http.Request, url *url.URL) *http.Response {
+type Control struct {
+	Groups *[]Backend
+}
+
+func Controller(r *http.Request) *Backend {
+	var backend *Backend
+	var github = NewBackendDefault([]string{"https://github.com"})
+	var backendAP = NewBackendDefault([]string{"http://localhost:81", "http://localhost:82"})
+	switch r.Header.Get("X-Test") {
+	case "true":
+		backend = backendAP
+	default:
+		backend = github
+	}
+	return backend
+}
+
+func DoRequest(r *http.Request, url *url.URL) *http.Response {
 	/* Get raw method, body, and request uri */
 	method := r.Method
 	body := r.Body
-	path := r.URL.Path
-	rawQuery := r.URL.RawQuery
-	host := url.Scheme + "://" + url.Host
-	var uri string
-	if path != "" {
-		uri = host + path
-	} else {
-		uri = uri + host
+	uri := url.Scheme + "://" + url.Host
+	if path := r.URL.Path; path != "/" {
+		uri = uri + path
 	}
-	if rawQuery != "" {
+	if rawQuery := r.URL.RawQuery; rawQuery != "" {
 		uri = uri + "?" + rawQuery
 	}
 	/* Create Request */
@@ -136,25 +132,23 @@ func Proxy(r *http.Request, url *url.URL) *http.Response {
 	return resp
 }
 
-func NewBackendDefault(servers []string) *Backend {
-	return &Backend{
-		Upstreams:    servers,
-		MaxFail:      3,
-		MaxPauseTime: 2 * time.Minute,
-		failTimes:    make(map[string]int),
-		pause:        make(map[string]time.Time),
-	}
-}
+func ModifyResponse(rw http.ResponseWriter, r *http.Request) {
+	rw.Header().Set("X-Proxy-Enable", "true")
+	backend := Controller(r)
+	url := backend.GetUrl()
+	resp := DoRequest(r, url)
+	backend.CheckUpstream(resp.Request.Host, resp.StatusCode)
 
-func Controller(r *http.Request) *Backend {
-	var backend *Backend
-	var github = NewBackendDefault([]string{"https://github.com"})
-	var backendAP = NewBackendDefault([]string{"http://localhost:81", "http://localhost:82"})
-	switch r.Header.Get("X-Test") {
-	case "true":
-		backend = backendAP
-	default:
-		backend = github
+	/* Parse body */
+	if resp.StatusCode == http.StatusBadGateway || resp.StatusCode == http.StatusGatewayTimeout {
+		rw.WriteHeader(resp.StatusCode)
+		rw.Write([]byte(nil))
+	} else {
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			fmt.Println(err)
+		}
+		resp.Body.Close()
+		rw.Write(body)
 	}
-	return backend
 }
