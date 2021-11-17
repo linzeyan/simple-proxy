@@ -26,6 +26,10 @@ func main() {
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+	var github = proxy.NewBackendDefault([]string{"https://github.com"})
+	var backendAP = proxy.NewBackendDefault([]string{"http://localhost:81", "http://localhost:82"})
+	proxy.NewRoutes("http://git.com", github)
+	proxy.NewRoutes("http://test.com", backendAP)
 	http.HandleFunc("/", proxy.ModifyResponse)
 	err := http.ListenAndServe("0.0.0.0:"+*port, nil)
 	if err != nil {

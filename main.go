@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+var Routes = new(Control)
+
 type Backend struct {
 	/* Backend servers */
 	Upstreams    []string
@@ -85,20 +87,27 @@ func NewBackendDefault(servers []string) *Backend {
 }
 
 type Control struct {
-	Groups *[]Backend
+	Groups map[string]*Backend
 }
 
-func Controller(r *http.Request) *Backend {
-	var backend *Backend
-	var github = NewBackendDefault([]string{"https://github.com"})
-	var backendAP = NewBackendDefault([]string{"http://localhost:81", "http://localhost:82"})
-	switch r.Header.Get("X-Test") {
-	case "true":
-		backend = backendAP
-	default:
-		backend = github
+func Controller(r *http.Request) (backend *Backend) {
+	for k := range Routes.Groups {
+		if ok := strings.Contains(k, r.URL.Host); ok {
+			return Routes.Groups[k]
+		}
 	}
-	return backend
+	// if s := r.Header.Get("X-Test"); s != "" {
+	// 	return Routes.Groups[s]
+	// }
+	return
+}
+
+func NewRoutes(serverName string, backend *Backend) *Control {
+	if Routes.Groups == nil {
+		Routes.Groups = make(map[string]*Backend, 3)
+	}
+	Routes.Groups[serverName] = backend
+	return Routes
 }
 
 func DoRequest(r *http.Request, url *url.URL) *http.Response {
