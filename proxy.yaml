@@ -1,0 +1,11 @@
+github:
+  serverName: "git.com"
+  upstream:
+    - "https://github.com"
+    - "https://about.gitlab.com"
+
+test:
+  serverName: "test.com"
+  upstream:
+    - "http://localhost:81"
+    - "http://localhost:82"
