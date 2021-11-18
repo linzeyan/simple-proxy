@@ -1,8 +1,10 @@
 package proxy
 
 import (
+	"bytes"
 	"fmt"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -127,10 +129,12 @@ func NewConfig(serverName string, backend *Backend) {
 func DoRequest(r *http.Request, url *url.URL) *http.Response {
 	/* Get raw method, body, and request uri */
 	method := r.Method
-	body := r.Body
+	bodyByte, _ := ioutil.ReadAll(r.Body)
+	body := bytes.NewReader(bodyByte)
 	uri := url.Scheme + "://" + url.Host
-	if path := r.URL.Path; path != "/" {
+	if path := r.URL.String(); path != "/" {
 		uri = uri + path
+		fmt.Println(uri)
 	}
 	if rawQuery := r.URL.RawQuery; rawQuery != "" {
 		uri = uri + "?" + rawQuery
@@ -143,8 +147,26 @@ func DoRequest(r *http.Request, url *url.URL) *http.Response {
 			Request:    req,
 		}
 	}
+	/* Modify headers */
+	req.Header = r.Header
+	req.RequestURI = ""
+	if ip, _, err := net.SplitHostPort(req.RemoteAddr); err == nil {
+		addHeaders(req.Header, ip)
+	}
+	delHeaders(req.Header)
 	/* Do Request */
-	client := http.Client{}
+	client := http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			ExpectContinueTimeout: time.Second,
+			DisableKeepAlives:     false,
+			DisableCompression:    false,
+			ForceAttemptHTTP2:     true,
+		},
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return &http.Response{
@@ -156,22 +178,59 @@ func DoRequest(r *http.Request, url *url.URL) *http.Response {
 }
 
 func ModifyResponse(rw http.ResponseWriter, r *http.Request) {
-	rw.Header().Set("X-Proxy-Enable", "true")
 	backend := BackendSelector(r)
 	server := backend.GetBackendServer()
 	resp := DoRequest(r, server)
 	backend.CheckUpstream(resp.Request.Host, resp.StatusCode)
 
 	/* Parse body */
+	var body []byte
 	if resp.StatusCode == http.StatusBadGateway || resp.StatusCode == http.StatusGatewayTimeout {
-		rw.WriteHeader(resp.StatusCode)
-		rw.Write([]byte(nil))
+		body = []byte(``)
 	} else {
-		body, err := ioutil.ReadAll(resp.Body)
+		bodyRaw, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
 			fmt.Println(err)
 		}
 		resp.Body.Close()
-		rw.Write(body)
+		body = bodyRaw
+	}
+
+	delHeaders(resp.Header)
+	copyHeaders(resp.Header, rw.Header())
+	rw.WriteHeader(resp.StatusCode)
+	rw.Write(body)
+}
+
+func addHeaders(header http.Header, host string) {
+	if origin, ok := header["X-Forwarded-For"]; ok {
+		host = strings.Join(origin, ", ") + ", " + host
+	}
+	header.Set("X-Forwarded-For", host)
+	header.Set("X-Proxy-Enable", "true")
+}
+
+func delHeaders(header http.Header) {
+	var hopHeaders = []string{
+		"Connection",
+		"Keep-Alive",
+		"Proxy-Authenticate",
+		"Proxy-Authorization",
+		"Proxy-Connection",
+		"Te",
+		"Trailers",
+		"Transfer-Encoding",
+		"Upgrade",
+	}
+	for _, v := range hopHeaders {
+		header.Del(v)
+	}
+}
+
+func copyHeaders(src, dst http.Header) {
+	for k, v := range src {
+		for _, vv := range v {
+			dst.Add(k, vv)
+		}
 	}
 }
