@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-var Routes = new(Control)
+var Routes = NewControl()
 
 type Backend struct {
 	/* Backend servers */
@@ -41,6 +41,12 @@ func (b *Backend) GetUrl() *url.URL {
 
 /* Modify Upstream list */
 func (b *Backend) CheckUpstream(host string, statusCode int) {
+	if b.failTimes == nil {
+		b.failTimes = make(map[string]int)
+	}
+	if b.pause == nil {
+		b.pause = make(map[string]time.Time)
+	}
 	if _, ok := b.failTimes[host]; !ok {
 		b.failTimes[host] = 0
 	}
@@ -90,6 +96,16 @@ type Control struct {
 	Groups map[string]*Backend
 }
 
+func NewControl() *Control {
+	var ctr = new(Control)
+	ctr.Groups = map[string]*Backend{}
+	return ctr
+}
+
+func NewRoutes(serverName string, backend *Backend){
+	Routes.Groups[serverName] = backend
+}
+
 func Controller(r *http.Request) (backend *Backend) {
 	for k := range Routes.Groups {
 		if ok := strings.Contains(k, r.URL.Host); ok {
@@ -100,14 +116,6 @@ func Controller(r *http.Request) (backend *Backend) {
 	// 	return Routes.Groups[s]
 	// }
 	return
-}
-
-func NewRoutes(serverName string, backend *Backend) *Control {
-	if Routes.Groups == nil {
-		Routes.Groups = make(map[string]*Backend, 3)
-	}
-	Routes.Groups[serverName] = backend
-	return Routes
 }
 
 func DoRequest(r *http.Request, url *url.URL) *http.Response {
