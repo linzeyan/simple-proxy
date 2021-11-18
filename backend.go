@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"bytes"
 	"fmt"
 	"io/ioutil"
 	"net"
@@ -12,6 +11,17 @@ import (
 )
 
 var Routes = NewUpstream()
+var hopHeaders = []string{
+	"Connection",
+	"Keep-Alive",
+	"Proxy-Authenticate",
+	"Proxy-Authorization",
+	"Proxy-Connection",
+	"Te",
+	"Trailers",
+	"Transfer-Encoding",
+	"Upgrade",
+}
 
 type Backend struct {
 	/* Backend servers */
@@ -129,12 +139,10 @@ func NewConfig(serverName string, backend *Backend) {
 func DoRequest(r *http.Request, url *url.URL) *http.Response {
 	/* Get raw method, body, and request uri */
 	method := r.Method
-	bodyByte, _ := ioutil.ReadAll(r.Body)
-	body := bytes.NewReader(bodyByte)
+	body := r.Body
 	uri := url.Scheme + "://" + url.Host
 	if path := r.URL.String(); path != "/" {
 		uri = uri + path
-		fmt.Println(uri)
 	}
 	if rawQuery := r.URL.RawQuery; rawQuery != "" {
 		uri = uri + "?" + rawQuery
@@ -150,10 +158,8 @@ func DoRequest(r *http.Request, url *url.URL) *http.Response {
 	/* Modify headers */
 	req.Header = r.Header
 	req.RequestURI = ""
-	if ip, _, err := net.SplitHostPort(req.RemoteAddr); err == nil {
-		addHeaders(req.Header, ip)
-	}
-	delHeaders(req.Header)
+	addHeaders(req)
+	deleteHeaders(req.Header)
 	/* Do Request */
 	client := http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -196,32 +202,24 @@ func ModifyResponse(rw http.ResponseWriter, r *http.Request) {
 		body = bodyRaw
 	}
 
-	delHeaders(resp.Header)
+	deleteHeaders(resp.Header)
 	copyHeaders(resp.Header, rw.Header())
 	rw.WriteHeader(resp.StatusCode)
 	rw.Write(body)
 }
 
-func addHeaders(header http.Header, host string) {
-	if origin, ok := header["X-Forwarded-For"]; ok {
-		host = strings.Join(origin, ", ") + ", " + host
+func addHeaders(r *http.Request) {
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil {
+		if origin, ok := r.Header["X-Forwarded-For"]; ok {
+			ip = strings.Join(origin, ", ") + ", " + ip
+		}
+		r.Header.Set("X-Forwarded-For", ip)
 	}
-	header.Set("X-Forwarded-For", host)
-	header.Set("X-Proxy-Enable", "true")
+	r.Header.Set("X-Proxy-Enable", "true")
 }
 
-func delHeaders(header http.Header) {
-	var hopHeaders = []string{
-		"Connection",
-		"Keep-Alive",
-		"Proxy-Authenticate",
-		"Proxy-Authorization",
-		"Proxy-Connection",
-		"Te",
-		"Trailers",
-		"Transfer-Encoding",
-		"Upgrade",
-	}
+func deleteHeaders(header http.Header) {
 	for _, v := range hopHeaders {
 		header.Del(v)
 	}
