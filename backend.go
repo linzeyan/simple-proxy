@@ -113,27 +113,23 @@ func NewServer(serverName string) *Server {
 }
 
 func BackendSelector(r *http.Request) (backend *Backend) {
-	for k := range Routes.Sets {
+	for k := range Routes {
 		if ok := strings.Contains(k.ServerName, r.Host); ok {
-			return Routes.Sets[k]
+			return Routes[k]
 		}
 	}
 	return
 }
 
-type Upstream struct {
-	Sets map[*Server]*Backend
-}
+type Upstream map[*Server]*Backend
 
-func NewUpstream() *Upstream {
-	return &Upstream{
-		Sets: make(map[*Server]*Backend),
-	}
+func NewUpstream() Upstream {
+	return make(map[*Server]*Backend)
 }
 
 func NewConfig(serverName string, backend *Backend) {
 	s := NewServer(serverName)
-	Routes.Sets[s] = backend
+	Routes[s] = backend
 }
 
 func DoRequest(r *http.Request, url *url.URL) *http.Response {
