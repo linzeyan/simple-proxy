@@ -170,6 +170,9 @@ func DoRequest(r *http.Request, url *url.URL) *http.Response {
 		},
 	}
 	resp, err := client.Do(req)
+	if resp != nil {
+		defer resp.Body.Close()
+	}
 	if err != nil {
 		return &http.Response{
 			StatusCode: http.StatusBadGateway,
